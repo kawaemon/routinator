@@ -1,5 +1,7 @@
 //! Checking for validity of route announcements.
 
+use std::io::Cursor;
+use std::time::{Duration, Instant};
 use std::{fmt, io};
 use std::str::FromStr;
 use chrono::{DateTime, Utc};
@@ -132,24 +134,91 @@ impl<'a> RouteValidity<'a> {
         Self::validate(prefix, asn, covers)
     }
 
+    // bench
     pub fn new_batch(
         routes: impl IntoIterator<Item = (Prefix, Asn)>,
         snapshot: &'a PayloadSnapshot,
     ) -> Vec<Self> {
+        let queries = routes.into_iter().collect::<Vec<_>>();
+        eprintln!("{} queries", queries.len());
 
-        // using PrefixMap significantly improves time
-        // to search covering RouteOrigins,however creating it takes a little time.
-        // so if requested routes are smaller than this value,
-        // avoid creating it and use linear-search to minimize overall time.
-        const TREE_THRESHOLD: usize = 100;
+        const RUNS: usize = 10;
+        let mut n = 1;
+        for _ in 0..5 {
+            let (old_avg_ms, old_routes) = {
+                let mut total = Duration::new(0, 0);
+                let mut first = Vec::new();
 
-        let routes = routes.into_iter();
-        if routes.size_hint().0 < TREE_THRESHOLD {
-            return routes
-                .map(|(pref, asn)| Self::new(pref, asn, snapshot))
-                .collect();
+                for run in 0..RUNS {
+                    let now = Instant::now();
+                    let res = queries[0..n].iter().map(|&(pref, asn)| {
+                        Self::new(pref, asn, snapshot)
+                    }).collect::<Vec<_>>();
+
+                    total += now.elapsed();
+                    if run == 0 {
+                        first = res;
+                    }
+                }
+
+                ((total.as_secs_f64() * 1000.0) / (RUNS as f64), first)
+            };
+
+            let (new_avg_ms, new_routes) = {
+                let mut total = Duration::new(0, 0);
+                let mut first = Vec::new();
+
+                for run in 0..RUNS {
+                    let now = Instant::now();
+                    let res = Self::new_batch_actual(
+                        queries[0..n].iter().cloned(),
+                        snapshot
+                    );
+
+                    total += now.elapsed();
+                    if run == 0 {
+                        first = res;
+                    }
+                }
+
+                ((total.as_secs_f64() * 1000.0) / (RUNS as f64), first)
+            };
+
+            {
+                let now = Utc::now();
+                let a = {
+                    let mut w = Cursor::new(vec![]);
+                    RouteValidityList {
+                        routes: old_routes,
+                        created: now
+                    }.write_plain(&mut w).unwrap();
+                    String::from_utf8(w.into_inner()).unwrap()
+                };
+                let b = {
+                    let mut w = Cursor::new(vec![]);
+                    RouteValidityList {
+                        routes: new_routes,
+                        created: now
+                    }.write_plain(&mut w).unwrap();
+                    String::from_utf8(w.into_inner()).unwrap()
+                };
+
+                pretty_assertions::assert_eq!(a, b);
+            }
+
+            eprintln!("n={n}: old avg {:.2}ms, new avg {:.2}ms, win by {:.2}x", old_avg_ms, new_avg_ms, old_avg_ms/new_avg_ms);
+
+            n *= 10;
         }
 
+        todo!()
+    }
+
+
+    fn new_batch_actual(
+        routes: impl IntoIterator<Item = (Prefix, Asn)>,
+        snapshot: &'a PayloadSnapshot,
+    ) -> Vec<Self> {
         let mut tree = JointPrefixMap::<_, Vec<_>>::new();
         for data in snapshot.origins() {
             let prefix = IpNet::new(data.0.prefix.addr(), data.0.prefix.prefix_len()).unwrap();
@@ -157,6 +226,7 @@ impl<'a> RouteValidity<'a> {
         }
 
         routes
+            .into_iter()
             .map(|(prefix, asn)| {
                 let net = IpNet::new(prefix.addr(), prefix.len()).unwrap();
                 let covers = tree.cover_values(&net)
@@ -273,7 +343,7 @@ impl<'a> RouteValidity<'a> {
             {indent}    \"prefix\": \"{}\"\n\
             {indent}  }},\n\
             {indent}  \"validity\": {{\n\
-            {indent}    \"state\": \"{}\",",  
+            {indent}    \"state\": \"{}\",",
             self.asn,
             self.prefix,
             self.state(),
@@ -568,4 +638,3 @@ mod test {
         );
     }
 }
-
