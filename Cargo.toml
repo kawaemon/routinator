@@ -61,6 +61,7 @@ ui = []
 
 [profile.release]
 panic = "abort"
+debug = true
 
 [package.metadata.docs.rs]
 # Building the UI breaks docs.rs, so let’s not.
@@ -130,3 +131,5 @@ assets = [
 shadow-utils = "*"
 rsync = "*"
 
+[patch.crates-io]
+rpki = { path = "../rpki-rs" }

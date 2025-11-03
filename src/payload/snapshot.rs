@@ -6,6 +6,8 @@
 
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
+use ipnet::IpNet;
+use prefix_trie::joint::JointPrefixMap;
 use rpki::repository::x509::Time;
 use rpki::rtr::payload::{
     Aspa, PayloadRef, PayloadType, RouteOrigin, RouterKey
@@ -21,7 +23,7 @@ use super::info::PayloadInfo;
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct PayloadSnapshot {
     /// The route origins.
-    origins: PayloadCollection<RouteOrigin>,
+    origins: TreePayloadCollection,
 
     /// The router keys,
     router_keys: PayloadCollection<RouterKey>,
@@ -60,7 +62,7 @@ impl PayloadSnapshot {
         refresh: Option<Time>
     ) -> Self {
         Self {
-            origins: PayloadCollection::from_iter(origins),
+            origins: TreePayloadCollection::new(origins),
             router_keys: PayloadCollection::from_iter(router_keys),
             aspas: PayloadCollection::from_iter(aspas),
             created: Utc::now(),
@@ -139,26 +141,6 @@ impl PayloadSnapshot {
     ) -> impl Iterator<Item = PayloadRef<'_>> {
         self.aspas.iter_payload()
     }
-
-    /// Returns an iterator over the payload of a shared snapshot.
-    pub fn arc_iter(self: Arc<Self>) -> SnapshotArcIter {
-        SnapshotArcIter::new(self)
-    }
-
-    /// Returns an iterator over the origins of a shared snapshot.
-    pub fn arc_origin_iter(self: Arc<Self>) -> SnapshotArcOriginIter {
-        SnapshotArcOriginIter::new(self)
-    }
-
-    /// Returns an iterator over the router keys of a shared snapshot.
-    pub fn arc_router_key_iter(self: Arc<Self>) -> SnapshotArcRouterKeyIter {
-        SnapshotArcRouterKeyIter::new(self)
-    }
-
-    /// Returns an iterator over the ASPAs of a shared snapshot.
-    pub fn arc_aspa_iter(self: Arc<Self>) -> SnapshotArcAspaIter {
-        SnapshotArcAspaIter::new(self)
-    }
 }
 
 
@@ -172,6 +154,33 @@ impl AsRef<PayloadSnapshot> for PayloadSnapshot {
 
 
 //------------ PayloadCollection ---------------------------------------------
+
+
+#[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct TreePayloadCollection {
+    tree: JointPrefixMap<IpNet, Vec<(RouteOrigin, PayloadInfo)>>
+}
+impl TreePayloadCollection {
+    pub fn new(origins: impl Iterator<Item = (RouteOrigin, PayloadInfo)>) -> Self {
+        let mut tree = JointPrefixMap::<_, Vec<_>>::new();
+        for data in origins {
+            let prefix = IpNet::new(data.0.prefix.addr(), data.0.prefix.prefix_len()).unwrap();
+            tree.entry(prefix).or_default().push(data);
+        }
+        Self { tree }
+    }
+
+    /// Returns an iterator over the payload.
+    pub fn iter(&self) -> impl Iterator<Item = (&RouteOrigin, &PayloadInfo)> {
+        self.tree.values().flatten().map(|item| (&item.0, &item.1))
+    }
+
+    /// Returns an iterator over just the payload.
+    pub fn iter_payload(&self) -> impl Iterator<Item = PayloadRef<'_>> {
+        self.tree.values().flatten().map(|item| (&item.0).into())
+    }
+}
 
 /// An ordered collection of payload.
 #[derive(Clone, Debug)]
@@ -190,7 +199,7 @@ impl<P> PayloadCollection<P> {
     pub fn from_vec(mut vec: Vec<(P, PayloadInfo)>) -> Self
     where P: Ord {
         vec.sort_unstable_by(|left, right| left.0.cmp(&right.0));
-        Self { vec}
+        Self { vec }
     }
 
     /// Returns the length of the collection.
@@ -275,10 +284,8 @@ impl<'a> arbitrary::Arbitrary<'a> for PayloadCollection<Aspa> {
 //----------- SnapshotArcIter ------------------------------------------------
 
 /// An iterator over the VRPs of a shared snapshot.
-#[derive(Clone, Debug)]
-pub struct SnapshotArcIter {
-    /// The shared snapshot.
-    snapshot: Arc<PayloadSnapshot>,
+pub struct SnapshotArcIter<'a> {
+    snapshot: Box<dyn 'a +Send+Sync+ Iterator<Item = (PayloadRef<'a>, &'a PayloadInfo)>>,
 
     /// The payload type we currently are processing.
     current_type: PayloadType,
@@ -287,9 +294,15 @@ pub struct SnapshotArcIter {
     next: usize,
 }
 
-impl SnapshotArcIter {
+impl<'a> SnapshotArcIter<'a> {
     /// Creates a new iterator from a shared snapshot.
-    fn new(snapshot: Arc<PayloadSnapshot>) -> Self {
+    fn new(snapshot: &'a PayloadSnapshot) -> Self {
+        let origins = snapshot.origins.iter().map(|x| (x.0.into(), x.1));
+        let router_keys = snapshot.router_keys.iter().map(|x| (x.0.into(), x.1));
+        let aspas = snapshot.aspas.iter().map(|x| (x.0.into(), x.1));
+
+        let snapshot = Box::new(origins.chain(router_keys).chain(aspas));
+
         Self {
             snapshot,
             current_type: PayloadType::Origin,
@@ -301,30 +314,11 @@ impl SnapshotArcIter {
     pub fn next_with_info(
         &mut self
     ) -> Option<(PayloadRef<'_>, &PayloadInfo)> {
-        if matches!(self.current_type, PayloadType::Origin) {
-            if let Some(res) = self.snapshot.origins.get(self.next) {
-                self.next += 1;
-                return Some((res.0.into(), res.1));
-            }
-            self.current_type = PayloadType::RouterKey;
-            self.next = 0;
-        }
-        if matches!(self.current_type, PayloadType::RouterKey) {
-            if let Some(res) = self.snapshot.router_keys.get(self.next) {
-                self.next += 1;
-                return Some((res.0.into(), res.1))
-            }
-            self.current_type = PayloadType::Aspa;
-            self.next = 0;
-        }
-        assert!(matches!(self.current_type, PayloadType::Aspa));
-        let res = self.snapshot.aspas.get(self.next)?;
-        self.next += 1;
-        Some((res.0.into(), res.1))
+        self.snapshot.next()
     }
 }
 
-impl PayloadSet for SnapshotArcIter {
+impl PayloadSet for SnapshotArcIter<'_> {
     fn next(&mut self) -> Option<PayloadRef<'_>> {
         self.next_with_info().map(|(res, _)| res)
     }
@@ -334,33 +328,29 @@ impl PayloadSet for SnapshotArcIter {
 //------------ SnapshotArcOriginIter -----------------------------------------
 
 /// An iterator over the route origins in a shared snapshot.
-#[derive(Clone, Debug)]
-pub struct SnapshotArcOriginIter {
-    /// The snapshot we iterate over.
-    snapshot: Arc<PayloadSnapshot>,
+pub struct SnapshotArcOriginIter<'a> {
+    snapshot: Box<dyn 'a + Iterator<Item = (RouteOrigin, &'a PayloadInfo)>>,
 
     /// The index of the next item in the current origin list.
     next: usize
 }
 
-impl SnapshotArcOriginIter {
+impl<'a> SnapshotArcOriginIter<'a> {
     /// Creates a new iterator from a shared snapshot.
-    fn new(snapshot: Arc<PayloadSnapshot>) -> Self {
+    fn new(snapshot: &'a PayloadSnapshot) -> Self {
         Self {
-            snapshot,
+            snapshot: Box::new(snapshot.origins()),
             next: 0,
         }
     }
 
     /// Returns the next item and its information.
-    pub fn next_with_info(&mut self) -> Option<(RouteOrigin, &PayloadInfo)> {
-        let (origin, info) = self.snapshot.origins.get(self.next)?;
-        self.next += 1;
-        Some((*origin, info))
+    pub fn next_with_info(&mut self) -> Option<(RouteOrigin, &'a PayloadInfo)> {
+        self.snapshot.next()
     }
 }
 
-impl Iterator for SnapshotArcOriginIter {
+impl Iterator for SnapshotArcOriginIter<'_> {
     type Item = RouteOrigin;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -427,4 +417,3 @@ impl SnapshotArcAspaIter {
         Some(res)
     }
 }
- 

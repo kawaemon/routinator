@@ -527,9 +527,8 @@ impl<Target: io::Write> OutputStream<Target> {
                 self.formatter.before_origins(target, self.output.route_origins)?
             },
             StreamState::Origin => {
-                let mut iter = self.snapshot.clone().arc_origin_iter();
                 let mut first = true;
-                while let Some((origin, info)) = iter.next_with_info() {
+                for (origin, info) in self.snapshot.origins() {
                     if !self.output.include_origin(origin) {
                         continue
                     }
@@ -892,7 +891,7 @@ impl<W: io::Write> Formatter<W> for Json {
             writeln!(target,
                 ",\
                 \n  \"roas\": ["
-            )?;    
+            )?;
             Ok(StreamState::Origin)
         } else {
             Ok(StreamState::KeyBefore)
@@ -1092,7 +1091,7 @@ impl<W: io::Write> Formatter<W> for ExtendedJson {
             writeln!(target,
                 ",\
                 \n  \"roas\": ["
-            )?;    
+            )?;
             Ok(StreamState::Origin)
         } else {
             Ok(StreamState::KeyBefore)
@@ -1264,7 +1263,7 @@ impl<W: io::Write> Formatter<W> for Slurm {
     fn before_router_keys(
             &self, target: &mut W, keys: bool
         ) -> Result<StreamState, io::Error> {
-        writeln!(target, 
+        writeln!(target,
         "    \"bgpsecAssertions\": [")?;
         match keys {
             true => Ok(StreamState::Key),
@@ -1384,7 +1383,7 @@ impl<W: io::Write> Formatter<W> for Slurm2 {
     fn before_router_keys(
             &self, target: &mut W, keys: bool
         ) -> Result<StreamState, io::Error> {
-        writeln!(target, 
+        writeln!(target,
         "    \"bgpsecAssertions\": [")?;
         match keys {
             true => Ok(StreamState::Key),
@@ -1755,7 +1754,7 @@ mod test {
 
     #[test]
     fn outputs() {
-        for format in OutputFormat::VALUES { 
+        for format in OutputFormat::VALUES {
             if matches!(format.1, OutputFormat::Rpsl) {
                 // RPSL includes the current time, making unit tests impossible
                 continue;
@@ -1783,7 +1782,7 @@ mod test {
                 let mut origins: Vec<(RouteOrigin, PayloadInfo)> = vec![];
                 {
                     let ro = RouteOrigin::new(
-                        MaxLenPrefix::from_str("12.34.56.0/24").unwrap(), 
+                        MaxLenPrefix::from_str("12.34.56.0/24").unwrap(),
                         Asn::from_u32(1234)
                     );
                     origins.push((ro, payload_info.clone().into()));
@@ -1792,12 +1791,12 @@ mod test {
 
                 let mut router_keys: Vec<(RouterKey, PayloadInfo)> = vec![];
                 {
-                    let key_info = 
+                    let key_info =
                     RouterKeyInfo::try_from(vec![0u8; 64]).unwrap();
                     let key_identifier = KeyIdentifier::from([0u8; 20]);
                     let rk = RouterKey::new(
-                        key_identifier, 
-                        Asn::from_u32(1234), 
+                        key_identifier,
+                        Asn::from_u32(1234),
                         key_info
                     );
                     router_keys.push((rk.clone(), payload_info.clone().into()));
@@ -1849,15 +1848,15 @@ mod test {
 
                 let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
                 d.push("test/output");
-                d.push(format!("{}{}{}.{}", 
-                    variation.0 as u32, 
-                    variation.1 as u32, 
-                    variation.2 as u32, 
+                d.push(format!("{}{}{}.{}",
+                    variation.0 as u32,
+                    variation.1 as u32,
+                    variation.2 as u32,
                     format.0
                 ));
 
                 println!("{} {:#?}", format.0, variation);
-                // git automatically changes \n to \r\n on Windows (and back 
+                // git automatically changes \n to \r\n on Windows (and back
                 // again when committing). This breaks the test.
                 let file = fs::read_to_string(d).unwrap().replace("\r\n", "\n");
                 assert_eq!(string, file);

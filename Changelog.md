@@ -579,7 +579,7 @@ Breaking Changes
   bundled TALs can be added via the new `--tal` command line and config
   option. Additionally, the TAL directory can still be used via the
   `--extra-tals-dir` option. The `tal-dir` option has been removed but will
-  still be accepted – and ignored – in the config file only. 
+  still be accepted – and ignored – in the config file only.
 
   The `init` command has been removed. ([#796])
 * Changed the default configuration option for `unsafe-vrps` to `accept`
@@ -773,7 +773,7 @@ New
 * Add a new URI parameter `include=more-specifics` to all HTTP payload output
   paths to include all route origins for prefixes that are more specifics of
   the selected prefixes. ([#707])
-* Add a new option `--more-specifics` to the `vrps` command to include all 
+* Add a new option `--more-specifics` to the `vrps` command to include all
   route origins for prefixes that are more specifics of the selected prefixes.
   ([#714])
 * Accept and process HEAD requests for all HTTP paths. ([#707])
@@ -864,7 +864,7 @@ Released 2021-09-15.
 
 Other Changes
 
-* Update UI to 0.3.4. ([#651]) 
+* Update UI to 0.3.4. ([#651])
   * Fixed links for prefixes.
 
 [#651]: https://github.com/NLnetLabs/routinator/pull/651
@@ -1245,14 +1245,14 @@ Bug Fixes
 
 Other Changes
 
-* Update minor dependencies in `Cargo.lock`. ([#439]) 
+* Update minor dependencies in `Cargo.lock`. ([#439])
 
 [#433]: https://github.com/NLnetLabs/routinator/pull/433
 [#438]: https://github.com/NLnetLabs/routinator/pull/438
 [#439]: https://github.com/NLnetLabs/routinator/pull/439
 
 
-## 0.8.1 ‘Pure as New York Snow’ 
+## 0.8.1 ‘Pure as New York Snow’
 
 Released 2020-11-30.
 
@@ -1562,7 +1562,7 @@ Other Changes
   hasn’t been updated yet. Processing is then picked up by the next
   available worker thread. This should guarantee that all worker threads
   are busy all the time. ([#284)]
-* Optimized what information to keep for each ROA, bringing maximum memory 
+* Optimized what information to keep for each ROA, bringing maximum memory
   consumption down to about a quarter. ([#293])
 * The Docker image now wraps Routinator into [tini] for properly dealing
   with signals and child processes. ([#277])
@@ -1805,7 +1805,7 @@ Breaking Changes
 
 New
 
-* Four new monitoring gauges `last_update_start`, `last_update_done`, 
+* Four new monitoring gauges `last_update_start`, `last_update_done`,
   `last_update_duration`, and `serial` that will allow alerting if
   Routinator stops updating. ([#122] and [#131])
 * Accept RTR listening socket from systemd. This allows to listen on port

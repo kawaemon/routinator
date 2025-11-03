@@ -9,7 +9,7 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
 use chrono::{DateTime, Utc};
 use log::info;
-use rpki::rtr::{Serial, State, Timing};
+use rpki::rtr::{PayloadRef, Serial, State, Timing};
 use rpki::rtr::server::PayloadSource;
 use crate::config::{Config, FilterPolicy};
 use crate::metrics::Metrics;
@@ -143,7 +143,7 @@ impl SharedHistory {
 //--- PayloadSource
 
 impl PayloadSource for SharedHistory {
-    type Set = SnapshotArcIter;
+    type Set<'a> = SnapshotArcIter<'a>;
     type Diff = DeltaArcIter;
 
     fn ready(&self) -> bool {
@@ -155,11 +155,11 @@ impl PayloadSource for SharedHistory {
         State::from_parts(read.rtr_session(), read.serial())
     }
 
-    fn full(&self) -> (State, Self::Set) {
+    fn full(&self) -> (State, impl Send + Iterator<Item = PayloadRef<'_>>) {
         let read = self.read();
+
         (
             State::from_parts(read.rtr_session(), read.serial()),
-            read.current.clone().unwrap_or_default().arc_iter(),
         )
     }
 
@@ -442,4 +442,3 @@ impl PayloadHistory {
         self.unsafe_vrps
     }
 }
-
